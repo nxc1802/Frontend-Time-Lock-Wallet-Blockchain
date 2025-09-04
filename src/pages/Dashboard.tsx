@@ -189,7 +189,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
       .filter(lock => {
         const currentTime = Math.floor(Date.now() / 1000);
         const unlockTime = lock.account.unlockTimestamp.toNumber();
-        return currentTime >= unlockTime;
+        const isUnlocked = currentTime >= unlockTime;
+        const hasAmount = lock.account.amount.toNumber() > 0; // Filter out withdrawn items (amount = 0)
+        
+        if (!hasAmount) {
+          console.log('🚫 Filtering out withdrawn item (amount = 0):', lock.publicKey.toBase58());
+        }
+        
+        return isUnlocked && hasAmount;
       })
       .sort((a, b) => {
         // Sort by unlock timestamp (earliest ready first)
