@@ -24,54 +24,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
   const [timeLocks, setTimeLocks] = useState<TimeLockData[]>([]);
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [usdcBalance, setUsdcBalance] = useState<number>(0);
-  const [completedPayments, setCompletedPayments] = useState<TimeLockData[]>(() => {
-    // Load completed payments from localStorage
-    try {
-      const saved = localStorage.getItem('completedPayments');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Convert string publicKeys back to PublicKey objects
-        return parsed.map((item: any) => ({
-          ...item,
-          publicKey: new PublicKey(item.publicKey),
-          account: {
-            ...item.account,
-            owner: new PublicKey(item.account.owner),
-            unlockTimestamp: new BN(item.account.unlockTimestamp)
-          }
-        }));
-      }
-    } catch (error) {
-      console.error('Error loading completed payments from localStorage:', error);
-    }
-    return [];
-  });
-  const [activeTab, setActiveTab] = useState<'locked' | 'ready' | 'completed'>('locked');
+  const [activeTab, setActiveTab] = useState<'locked' | 'ready'>('locked');
 
-  // Load user's time locks and filter out completed ones
+  // Load user's time locks
   const loadTimeLocks = useCallback(async () => {
     const locks = await loadUserTimeLocks();
-    
-    // Get completed payment IDs from localStorage
-    const completedIds = completedPayments.map(cp => cp.publicKey.toBase58());
-    
-    // Filter out completed payments and payments with 0 amount (withdrawn)
-    const activeLocks = locks.filter(lock => {
-      const lockId = lock.publicKey.toBase58();
-      const isCompleted = completedIds.includes(lockId);
-      const isWithdrawn = lock.account.amount.toNumber() === 0;
-      
-      if (isCompleted || isWithdrawn) {
-        console.log('🚫 Filtering out completed/withdrawn lock:', lockId, { isCompleted, isWithdrawn });
-        return false;
-      }
-      
-      return true;
-    });
-    
-    console.log('📦 Loaded active locks:', activeLocks.length, 'Total locks:', locks.length);
-    setTimeLocks(activeLocks);
-  }, [loadUserTimeLocks, completedPayments]);
+    setTimeLocks(locks);
+  }, [loadUserTimeLocks]);
 
   // Load wallet balance (SOL and USDC)
   const loadWalletBalance = useCallback(async () => {
@@ -164,35 +123,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     const result = await withdrawFromTimeLock(timeLock);
     
     if (result.success) {
-      console.log('✅ Withdrawal successful, moving to completed tab...');
+      console.log('✅ Withdrawal successful, refreshing dashboard...');
       
       // Remove from active timeLocks array
       setTimeLocks(prev => prev.filter(lock => 
         !lock.publicKey.equals(timeLock.publicKey)
       ));
-      
-      // Add timestamp when moved to completed
-      const completedPayment = {
-        ...timeLock,
-        completedAt: Date.now()
-      };
-      setCompletedPayments(prev => {
-        const updated = [...prev, completedPayment];
-        // Save to localStorage for persistence (serialize PublicKey objects)
-        const serializable = updated.map(item => ({
-          ...item,
-          publicKey: item.publicKey.toBase58(),
-          account: {
-            ...item.account,
-            owner: item.account.owner.toBase58(),
-            unlockTimestamp: item.account.unlockTimestamp.toString()
-          }
-        }));
-        localStorage.setItem('completedPayments', JSON.stringify(serializable));
-        return updated;
-      });
-      
-      console.log('🔄 Item moved to completed, removed from active locks, saved to localStorage');
       
       // Immediate refresh after successful withdrawal
       setTimeout(refreshDashboard, 1000);
@@ -261,15 +197,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
       });
   };
 
-  // Get completed payments (withdrawn) - sorted by completion time (most recent first)
-  const getCompletedPayments = () => {
-    return completedPayments.sort((a, b) => {
-      // Sort by completion timestamp (most recent first)
-      const aCompleted = (a as any).completedAt || 0;
-      const bCompleted = (b as any).completedAt || 0;
-      return bCompleted - aCompleted;
-    });
-  };
 
   // Render payment card
   const renderPaymentCard = (timeLock: TimeLockData, showActions: boolean = true) => {
@@ -506,16 +433,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
                     >
                       Ready ({getReadyToWithdrawPayments().length})
                     </button>
-                    <button
-                      onClick={() => setActiveTab('completed')}
-                      className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                        activeTab === 'completed'
-                          ? 'border-primary-500 text-primary-600 dark:text-primary-400'
-                          : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
-                      }`}
-                    >
-                      Completed ({getCompletedPayments().length})
-                    </button>
                   </nav>
                 </div>
 
@@ -553,21 +470,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
                     </div>
                   )}
 
-                  {activeTab === 'completed' && (
-                    <div>
-                      {getCompletedPayments().length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {getCompletedPayments().map((timeLock) => renderPaymentCard(timeLock, false))}
-                        </div>
-                      ) : (
-                        <Card className="text-center" padding="lg">
-                          <p className="text-gray-600 dark:text-gray-400">
-                            No completed transactions yet
-                          </p>
-                        </Card>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
