@@ -24,14 +24,54 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
   const [timeLocks, setTimeLocks] = useState<TimeLockData[]>([]);
   const [walletBalance, setWalletBalance] = useState<number>(0);
   const [usdcBalance, setUsdcBalance] = useState<number>(0);
-  const [completedPayments, setCompletedPayments] = useState<TimeLockData[]>([]);
+  const [completedPayments, setCompletedPayments] = useState<TimeLockData[]>(() => {
+    // Load completed payments from localStorage
+    try {
+      const saved = localStorage.getItem('completedPayments');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Convert string publicKeys back to PublicKey objects
+        return parsed.map((item: any) => ({
+          ...item,
+          publicKey: new PublicKey(item.publicKey),
+          account: {
+            ...item.account,
+            owner: new PublicKey(item.account.owner),
+            unlockTimestamp: new BN(item.account.unlockTimestamp)
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Error loading completed payments from localStorage:', error);
+    }
+    return [];
+  });
   const [activeTab, setActiveTab] = useState<'locked' | 'ready' | 'completed'>('locked');
 
-  // Load user's time locks
+  // Load user's time locks and filter out completed ones
   const loadTimeLocks = useCallback(async () => {
     const locks = await loadUserTimeLocks();
-    setTimeLocks(locks);
-  }, [loadUserTimeLocks]);
+    
+    // Get completed payment IDs from localStorage
+    const completedIds = completedPayments.map(cp => cp.publicKey.toBase58());
+    
+    // Filter out completed payments and payments with 0 amount (withdrawn)
+    const activeLocks = locks.filter(lock => {
+      const lockId = lock.publicKey.toBase58();
+      const isCompleted = completedIds.includes(lockId);
+      const isWithdrawn = lock.account.amount.toNumber() === 0;
+      
+      if (isCompleted || isWithdrawn) {
+        console.log('🚫 Filtering out completed/withdrawn lock:', lockId, { isCompleted, isWithdrawn });
+        return false;
+      }
+      
+      return true;
+    });
+    
+    console.log('📦 Loaded active locks:', activeLocks.length, 'Total locks:', locks.length);
+    setTimeLocks(activeLocks);
+  }, [loadUserTimeLocks, completedPayments]);
 
   // Load wallet balance (SOL and USDC)
   const loadWalletBalance = useCallback(async () => {
@@ -124,12 +164,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     const result = await withdrawFromTimeLock(timeLock);
     
     if (result.success) {
+      console.log('✅ Withdrawal successful, moving to completed tab...');
+      
+      // Remove from active timeLocks array
+      setTimeLocks(prev => prev.filter(lock => 
+        !lock.publicKey.equals(timeLock.publicKey)
+      ));
+      
       // Add timestamp when moved to completed
       const completedPayment = {
         ...timeLock,
         completedAt: Date.now()
       };
-      setCompletedPayments(prev => [...prev, completedPayment]);
+      setCompletedPayments(prev => {
+        const updated = [...prev, completedPayment];
+        // Save to localStorage for persistence (serialize PublicKey objects)
+        const serializable = updated.map(item => ({
+          ...item,
+          publicKey: item.publicKey.toBase58(),
+          account: {
+            ...item.account,
+            owner: item.account.owner.toBase58(),
+            unlockTimestamp: item.account.unlockTimestamp.toString()
+          }
+        }));
+        localStorage.setItem('completedPayments', JSON.stringify(serializable));
+        return updated;
+      });
+      
+      console.log('🔄 Item moved to completed, removed from active locks, saved to localStorage');
       
       // Immediate refresh after successful withdrawal
       setTimeout(refreshDashboard, 1000);
@@ -401,9 +464,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
                 Time-Locked Wallets
               </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Updates automatically when you create, withdraw or perform actions
-              </p>
             </div>
 
             {/* Time Locks List */}
