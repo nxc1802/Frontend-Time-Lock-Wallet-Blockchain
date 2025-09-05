@@ -19,7 +19,14 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigger }) => {
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
-  const { loadUserTimeLocks, withdrawFromTimeLock, isLoading, isWithdrawing } = useTimeLock();
+  const { 
+    loadUserTimeLocks, 
+    withdrawFromTimeLock, 
+    withdrawAndCloseTimeLock,
+    closeEmptyTimeLock,
+    isLoading, 
+    isWithdrawing 
+  } = useTimeLock();
 
   const [timeLocks, setTimeLocks] = useState<TimeLockData[]>([]);
   const [walletBalance, setWalletBalance] = useState<number>(0);
@@ -28,7 +35,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
 
   // Load user's time locks
   const loadTimeLocks = useCallback(async () => {
+    console.log('🔄 Dashboard loadTimeLocks called');
     const locks = await loadUserTimeLocks();
+    console.log('📊 Dashboard received locks:', locks.length, locks);
     setTimeLocks(locks);
   }, [loadUserTimeLocks]);
 
@@ -118,6 +127,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     }
   }, [refreshTrigger, refreshDashboard]);
 
+  // Auto-refresh every 30 seconds to update tab counts
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (connected && publicKey) {
+        console.log('🔄 Auto-refresh triggered');
+        refreshDashboard();
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [connected, publicKey, refreshDashboard]);
+
   // Handle withdraw
   const handleWithdraw = async (timeLock: TimeLockData) => {
     const result = await withdrawFromTimeLock(timeLock);
@@ -131,6 +152,44 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
       ));
       
       // Immediate refresh after successful withdrawal
+      setTimeout(refreshDashboard, 1000);
+    }
+  };
+
+  // Handle withdraw and close
+  const handleWithdrawAndClose = async (timeLock: TimeLockData) => {
+    const result = await withdrawAndCloseTimeLock(timeLock);
+    
+    if (result.success) {
+      console.log('✅ Withdrawal and close successful, refreshing dashboard...');
+      
+      // Remove from active timeLocks array
+      setTimeLocks(prev => prev.filter(lock => 
+        !lock.publicKey.equals(timeLock.publicKey)
+      ));
+      
+      // Immediate refresh after successful withdrawal
+      setTimeout(refreshDashboard, 1000);
+    }
+  };
+
+  // Handle close empty account
+  const handleCloseEmpty = async (timeLock: TimeLockData) => {
+    if (!window.confirm('Are you sure you want to close this empty account?')) {
+      return;
+    }
+
+    const result = await closeEmptyTimeLock(timeLock);
+    
+    if (result.success) {
+      console.log('✅ Close empty account successful, refreshing dashboard...');
+      
+      // Remove from active timeLocks array
+      setTimeLocks(prev => prev.filter(lock => 
+        !lock.publicKey.equals(timeLock.publicKey)
+      ));
+      
+      // Immediate refresh after successful close
       setTimeout(refreshDashboard, 1000);
     }
   };
@@ -168,40 +227,96 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
   const getAllPayments = () => {
     if (!publicKey) return [];
     
-    return timeLocks.filter(lock => {
+    const userPayments = timeLocks.filter(lock => {
       return lock.account.owner.equals(publicKey);
     });
+    
+    console.log('📊 Dashboard Debug:', {
+      totalTimeLocks: timeLocks.length,
+      userPayments: userPayments.length,
+      publicKey: publicKey.toBase58(),
+      timeLocks: timeLocks.map(lock => ({
+        address: lock.publicKey.toBase58().slice(0, 8) + '...',
+        owner: lock.account.owner.toBase58().slice(0, 8) + '...',
+        amount: lock.account.amount.toNumber(),
+        unlockTime: new Date(lock.account.unlockTimestamp.toNumber() * 1000).toLocaleString(),
+        isUserOwned: lock.account.owner.equals(publicKey)
+      }))
+    });
+    
+    return userPayments;
   };
 
   // Get locked payments (not yet unlocked)
   const getLockedPayments = () => {
-    return getAllPayments().filter(lock => {
-      return !lock.walletInfo?.isUnlocked;
+    const currentTime = Math.floor(Date.now() / 1000);
+    const allPayments = getAllPayments();
+    
+    console.log('🔒 getLockedPayments - All payments:', allPayments.length);
+    console.log('🔒 Current time:', currentTime, new Date(currentTime * 1000).toLocaleString());
+    
+    const locked = allPayments.filter(lock => {
+      const unlockTime = lock.account.unlockTimestamp.toNumber();
+      const isUnlocked = currentTime >= unlockTime;
+      const hasAmount = lock.account.amount.toNumber() > 0;
+      const isInitialized = lock.account.isInitialized;
+      
+      console.log('🔍 Locked check:', {
+        address: lock.publicKey.toBase58().slice(0, 8) + '...',
+        unlockTime,
+        unlockDate: new Date(unlockTime * 1000).toLocaleString(),
+        isUnlocked,
+        hasAmount,
+        isInitialized,
+        amount: lock.account.amount.toNumber(),
+        willBeLocked: !isUnlocked && hasAmount && isInitialized
+      });
+      
+      // Locked = not unlocked yet AND has amount AND is initialized
+      return !isUnlocked && hasAmount && isInitialized;
     }).sort((a, b) => {
       // Sort by unlock time (earliest first)
       return a.account.unlockTimestamp.toNumber() - b.account.unlockTimestamp.toNumber();
     });
+    
+    console.log('🔒 Locked result:', locked.length);
+    return locked;
   };
 
   // Get ready to withdraw payments (unlocked but not withdrawn) - sorted by unlock time
   const getReadyToWithdrawPayments = () => {
-    return getAllPayments()
-      .filter(lock => {
-        const currentTime = Math.floor(Date.now() / 1000);
-        const unlockTime = lock.account.unlockTimestamp.toNumber();
-        const isUnlocked = currentTime >= unlockTime;
-        const hasAmount = lock.account.amount.toNumber() > 0; // Filter out withdrawn items (amount = 0)
-        
-        if (!hasAmount) {
-          console.log('🚫 Filtering out withdrawn item (amount = 0):', lock.publicKey.toBase58());
-        }
-        
-        return isUnlocked && hasAmount;
-      })
-      .sort((a, b) => {
-        // Sort by unlock timestamp (earliest ready first)
-        return a.account.unlockTimestamp.toNumber() - b.account.unlockTimestamp.toNumber();
+    const currentTime = Math.floor(Date.now() / 1000);
+    const allPayments = getAllPayments();
+    
+    console.log('✅ getReadyToWithdrawPayments - All payments:', allPayments.length);
+    console.log('✅ Current time:', currentTime, new Date(currentTime * 1000).toLocaleString());
+    
+    const ready = allPayments.filter(lock => {
+      const unlockTime = lock.account.unlockTimestamp.toNumber();
+      const isUnlocked = currentTime >= unlockTime;
+      const hasAmount = lock.account.amount.toNumber() > 0;
+      const isInitialized = lock.account.isInitialized;
+      
+      console.log('🔍 Ready check:', {
+        address: lock.publicKey.toBase58().slice(0, 8) + '...',
+        unlockTime,
+        unlockDate: new Date(unlockTime * 1000).toLocaleString(),
+        isUnlocked,
+        hasAmount,
+        isInitialized,
+        amount: lock.account.amount.toNumber(),
+        willBeReady: isUnlocked && hasAmount && isInitialized
       });
+      
+      // Ready = unlocked AND has amount AND is initialized
+      return isUnlocked && hasAmount && isInitialized;
+    }).sort((a, b) => {
+      // Sort by unlock timestamp (earliest ready first)
+      return a.account.unlockTimestamp.toNumber() - b.account.unlockTimestamp.toNumber();
+    });
+    
+    console.log('✅ Ready result:', ready.length);
+    return ready;
   };
 
 
@@ -270,26 +385,50 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
 
           {/* Action Buttons */}
           {showActions && (
-            <div className="flex gap-2">
+            <div className="space-y-2">
               {timeLock.walletInfo?.isUnlocked ? (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => handleWithdraw(timeLock)}
-                  disabled={isWithdrawing === timeLock.publicKey.toBase58()}
-                  className="flex-1"
-                >
-                  {isWithdrawing === timeLock.publicKey.toBase58() ? 'Withdrawing...' : 'Withdraw'}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => handleWithdraw(timeLock)}
+                    disabled={isWithdrawing === timeLock.publicKey.toBase58()}
+                    className="flex-1"
+                  >
+                    {isWithdrawing === timeLock.publicKey.toBase58() ? 'Processing...' : 'Withdraw'}
+                  </Button>
+                  <Button
+                    variant="success"
+                    size="sm"
+                    onClick={() => handleWithdrawAndClose(timeLock)}
+                    disabled={isWithdrawing === timeLock.publicKey.toBase58()}
+                    className="flex-1"
+                  >
+                    {isWithdrawing === timeLock.publicKey.toBase58() ? 'Processing...' : 'Withdraw & Close'}
+                  </Button>
+                </div>
               ) : (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleDeletePayment(timeLock)}
-                  className="flex-1"
-                >
-                  Delete & Refund
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleDeletePayment(timeLock)}
+                    className="flex-1"
+                  >
+                    Delete & Refund
+                  </Button>
+                  {timeLock.account.amount.toNumber() === 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleCloseEmpty(timeLock)}
+                      disabled={isWithdrawing === timeLock.publicKey.toBase58()}
+                      className="flex-1"
+                    >
+                      {isWithdrawing === timeLock.publicKey.toBase58() ? 'Closing...' : 'Close Empty'}
+                    </Button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -395,9 +534,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
 
             {/* Title */}
             <div className="mb-6">
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Time-Locked Wallets
-              </h2>
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                  Time-Locked Wallets
+                </h2>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={refreshDashboard}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Refreshing...' : 'Refresh'}
+                </Button>
+              </div>
+              
             </div>
 
             {/* Time Locks List */}
@@ -406,22 +556,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
                 <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
                 <p className="text-gray-600 dark:text-gray-400">Loading...</p>
               </Card>
-            ) : getAllPayments().length === 0 ? (
-              <Card className="text-center" padding="lg">
-                <p className="text-gray-600 dark:text-gray-400 mb-4">
-                  You haven't created any time-locked wallets yet
-                </p>
-                <Button variant="primary" onClick={() => onNavigateToCreate?.()}>
-                  Create First Lock
-                </Button>
-              </Card>
             ) : (
               <div>
-                {/* Tabs */}
+                {/* Tabs - Always show tabs */}
                 <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
                   <nav className="-mb-px flex space-x-8">
                     <button
-                      onClick={() => setActiveTab('locked')}
+                      onClick={() => {
+                        console.log('🔒 Switching to Locked tab');
+                        setActiveTab('locked');
+                      }}
                       className={`py-2 px-1 border-b-2 font-medium text-sm ${
                         activeTab === 'locked'
                           ? 'border-primary-500 text-primary-600 dark:text-primary-400'
@@ -431,7 +575,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
                       Locked ({getLockedPayments().length})
                     </button>
                     <button
-                      onClick={() => setActiveTab('ready')}
+                      onClick={() => {
+                        console.log('✅ Switching to Ready tab');
+                        setActiveTab('ready');
+                      }}
                       className={`py-2 px-1 border-b-2 font-medium text-sm ${
                         activeTab === 'ready'
                           ? 'border-primary-500 text-primary-600 dark:text-primary-400'
@@ -445,38 +592,68 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
 
                 {/* Tab Content */}
                 <div>
-                  {activeTab === 'locked' && (
-                    <div>
-                      {getLockedPayments().length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {getLockedPayments().map((timeLock) => renderPaymentCard(timeLock))}
+                  {getAllPayments().length === 0 ? (
+                    <Card className="text-center" padding="lg">
+                      <p className="text-gray-600 dark:text-gray-400 mb-4">
+                        You haven't created any time-locked wallets yet
+                      </p>
+                      <Button variant="primary" onClick={() => onNavigateToCreate?.()}>
+                        Create First Lock
+                      </Button>
+                    </Card>
+                  ) : (
+                    <>
+                      {activeTab === 'locked' && (
+                        <div>
+                          {(() => {
+                            const lockedPayments = getLockedPayments();
+                            console.log('🔒 Locked tab - payments:', lockedPayments.length, lockedPayments.map(p => ({
+                              address: p.publicKey.toBase58().slice(0, 8) + '...',
+                              amount: p.account.amount.toNumber(),
+                              unlockTime: new Date(p.account.unlockTimestamp.toNumber() * 1000).toLocaleString()
+                            })));
+                            
+                            return lockedPayments.length > 0 ? (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {lockedPayments.map((timeLock) => renderPaymentCard(timeLock))}
+                              </div>
+                            ) : (
+                              <Card className="text-center" padding="lg">
+                                <p className="text-gray-600 dark:text-gray-400">
+                                  No locked wallets found
+                                </p>
+                              </Card>
+                            );
+                          })()}
                         </div>
-                      ) : (
-                        <Card className="text-center" padding="lg">
-                          <p className="text-gray-600 dark:text-gray-400">
-                            No locked wallets found
-                          </p>
-                        </Card>
                       )}
-                    </div>
-                  )}
 
-                  {activeTab === 'ready' && (
-                    <div>
-                      {getReadyToWithdrawPayments().length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {getReadyToWithdrawPayments().map((timeLock) => renderPaymentCard(timeLock))}
+                      {activeTab === 'ready' && (
+                        <div>
+                          {(() => {
+                            const readyPayments = getReadyToWithdrawPayments();
+                            console.log('✅ Ready tab - payments:', readyPayments.length, readyPayments.map(p => ({
+                              address: p.publicKey.toBase58().slice(0, 8) + '...',
+                              amount: p.account.amount.toNumber(),
+                              unlockTime: new Date(p.account.unlockTimestamp.toNumber() * 1000).toLocaleString()
+                            })));
+                            
+                            return readyPayments.length > 0 ? (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {readyPayments.map((timeLock) => renderPaymentCard(timeLock))}
+                              </div>
+                            ) : (
+                              <Card className="text-center" padding="lg">
+                                <p className="text-gray-600 dark:text-gray-400">
+                                  No wallets ready to withdraw
+                                </p>
+                              </Card>
+                            );
+                          })()}
                         </div>
-                      ) : (
-                        <Card className="text-center" padding="lg">
-                          <p className="text-gray-600 dark:text-gray-400">
-                            No wallets ready to withdraw
-                          </p>
-                        </Card>
                       )}
-                    </div>
+                    </>
                   )}
-
                 </div>
               </div>
             )}

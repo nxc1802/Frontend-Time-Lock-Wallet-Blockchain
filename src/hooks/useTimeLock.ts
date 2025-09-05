@@ -15,7 +15,9 @@ export const useTimeLock = () => {
     initialize, 
     depositSol, 
     depositToken, 
-    withdrawSol, 
+    withdrawSol,
+    withdrawAndCloseSol,
+    closeEmptyAccount,
     getUserTimeLocks 
   } = useProgramContext();
 
@@ -178,15 +180,122 @@ export const useTimeLock = () => {
     }
   }, [connected, publicKey, withdrawSol]);
 
+  // Withdraw and close account (combine withdraw + close in one transaction)
+  const withdrawAndCloseTimeLock = useCallback(async (timeLock: TimeLockData) => {
+    const walletValidation = ValidationUtils.validateWalletConnection(connected, publicKey);
+    if (!walletValidation.isValid) {
+      toast.error(walletValidation.error!);
+      return { success: false, error: walletValidation.error };
+    }
+
+    // Double-check if time lock is actually unlocked
+    const currentTime = Math.floor(Date.now() / 1000);
+    const unlockTime = timeLock.account.unlockTimestamp.toNumber();
+    const isActuallyUnlocked = currentTime >= unlockTime;
+
+    if (!isActuallyUnlocked) {
+      toast.error('Lock time has not expired yet');
+      return { success: false, error: 'Lock time has not expired yet' };
+    }
+
+    // Verify owner matches
+    if (!timeLock.account.owner.equals(publicKey!)) {
+      toast.error('You are not the owner of this time lock');
+      return { success: false, error: 'Not the owner' };
+    }
+
+    setIsWithdrawing(timeLock.publicKey.toBase58());
+    
+    try {
+      toast.loading('Đang rút tiền và đóng account...', { id: 'withdraw-close' });
+
+      if (timeLock.account.assetType === AssetType.Sol) {
+        await withdrawAndCloseSol(timeLock.publicKey);
+        
+        const amount = (timeLock.account.amount.toNumber() / LAMPORTS_PER_SOL).toFixed(4);
+        toast.success(
+          `${SUCCESS_MESSAGES.WITHDRAW_SUCCESS} ${amount} SOL và đã đóng account!`,
+          { id: 'withdraw-close', duration: 5000 }
+        );
+      } else {
+        // Handle token withdrawal and close
+        if (!timeLock.account.tokenVault) {
+          throw new Error('Invalid token vault');
+        }
+
+        // First withdraw tokens
+        // Note: This would need token mint info, which should be derived from vault
+        toast.error('Token withdraw and close not fully implemented yet');
+        return { success: false, error: 'Token withdraw and close feature coming soon' };
+      }
+
+      return { success: true };
+      
+    } catch (error: any) {
+      const errorMessage = ValidationUtils.formatError(error);
+      toast.error(`Withdrawal error: ${errorMessage}`, { id: 'withdraw-close' });
+      return { success: false, error: errorMessage };
+    } finally {
+      setIsWithdrawing(null);
+    }
+  }, [connected, publicKey, withdrawAndCloseSol]);
+
+  // Close empty account
+  const closeEmptyTimeLock = useCallback(async (timeLock: TimeLockData) => {
+    const walletValidation = ValidationUtils.validateWalletConnection(connected, publicKey);
+    if (!walletValidation.isValid) {
+      toast.error(walletValidation.error!);
+      return { success: false, error: walletValidation.error };
+    }
+
+    // Check if account is actually empty
+    if (timeLock.account.amount.toNumber() > 0) {
+      toast.error('Cannot close account with remaining funds');
+      return { success: false, error: 'Account not empty' };
+    }
+
+    // Verify owner matches
+    if (!timeLock.account.owner.equals(publicKey!)) {
+      toast.error('You are not the owner of this time lock');
+      return { success: false, error: 'Not the owner' };
+    }
+
+    setIsWithdrawing(timeLock.publicKey.toBase58());
+    
+    try {
+      toast.loading('Đang đóng empty account...', { id: 'close-empty' });
+      
+      await closeEmptyAccount(timeLock.publicKey);
+      
+      toast.success('Đã đóng empty account thành công!', { id: 'close-empty', duration: 5000 });
+
+      return { success: true };
+      
+    } catch (error: any) {
+      const errorMessage = ValidationUtils.formatError(error);
+      toast.error(`Close account error: ${errorMessage}`, { id: 'close-empty' });
+      return { success: false, error: errorMessage };
+    } finally {
+      setIsWithdrawing(null);
+    }
+  }, [connected, publicKey, closeEmptyAccount]);
+
   // Load user time locks
   const loadUserTimeLocks = useCallback(async (): Promise<TimeLockData[]> => {
+    console.log('🔄 loadUserTimeLocks called:', { connected, publicKey: publicKey?.toBase58() });
+    
     if (!connected || !publicKey) {
+      console.log('❌ Not connected or no public key');
       return [];
     }
 
     try {
-      return await getUserTimeLocks(publicKey);
+      console.log('📡 Calling getUserTimeLocks...');
+      const result = await getUserTimeLocks(publicKey);
+      console.log('✅ getUserTimeLocks result:', result.length, 'items');
+      return result;
     } catch (error) {
+      console.error('❌ Error in loadUserTimeLocks:', error);
       toast.error('Unable to load time-lock list');
       return [];
     }
@@ -197,6 +306,8 @@ export const useTimeLock = () => {
     isWithdrawing,
     createTimeLock,
     withdrawFromTimeLock,
+    withdrawAndCloseTimeLock,
+    closeEmptyTimeLock,
     loadUserTimeLocks,
   };
 };

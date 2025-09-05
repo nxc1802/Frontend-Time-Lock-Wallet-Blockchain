@@ -1,13 +1,13 @@
 import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
   TorusWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
-import { clusterApiUrl } from '@solana/web3.js';
+
+import { useCluster } from './ClusterContext';
 
 // Import wallet adapter CSS
 require('@solana/wallet-adapter-react-ui/styles.css');
@@ -17,11 +17,8 @@ interface WalletContextProviderProps {
 }
 
 const WalletContextProvider: React.FC<WalletContextProviderProps> = ({ children }) => {
-  // The network can be set to 'devnet', 'testnet', or 'mainnet-beta'.
-  const network = WalletAdapterNetwork.Devnet;
-
-  // You can also provide a custom RPC endpoint.
-  const endpoint = useMemo(() => clusterApiUrl(network), [network]);
+  // Get cluster endpoint from ClusterContext
+  const { endpoint } = useCluster();
 
   const wallets = useMemo(
     () => [
@@ -31,6 +28,8 @@ const WalletContextProvider: React.FC<WalletContextProviderProps> = ({ children 
     ],
     []
   );
+
+  console.log('🌐 WalletContext using endpoint:', endpoint);
 
   return (
     <ConnectionProvider endpoint={endpoint}>

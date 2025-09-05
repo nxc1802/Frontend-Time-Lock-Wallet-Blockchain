@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast';
 
 import WalletContextProvider from './contexts/WalletContext';
 import ProgramProvider from './contexts/ProgramContext';
+import ClusterProvider from './contexts/ClusterContext';
 import { Navigation, ErrorBoundary } from './components';
 import CreateLock from './pages/CreateLock';
 import Dashboard from './pages/Dashboard';
@@ -74,47 +75,49 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <WalletContextProvider>
-        <ProgramProvider>
-          <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-            <Navigation
-              currentPage={currentPage}
-              onPageChange={setCurrentPage}
-              darkMode={darkMode}
-              onToggleDarkMode={toggleDarkMode}
-            />
-            
-            <main>
-              {renderPage()}
-            </main>
+      <ClusterProvider>
+        <WalletContextProvider>
+          <ProgramProvider>
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+              <Navigation
+                currentPage={currentPage}
+                onPageChange={setCurrentPage}
+                darkMode={darkMode}
+                onToggleDarkMode={toggleDarkMode}
+              />
+              
+              <main>
+                {renderPage()}
+              </main>
 
-            {/* Toast notifications */}
-            <Toaster
-              position="top-right"
-              toastOptions={{
-                duration: 4000,
-                style: {
-                  background: darkMode ? '#374151' : '#ffffff',
-                  color: darkMode ? '#ffffff' : '#000000',
-                  border: darkMode ? '1px solid #4b5563' : '1px solid #e5e7eb',
-                },
-                success: {
-                  iconTheme: {
-                    primary: '#10b981',
-                    secondary: '#ffffff',
+              {/* Toast notifications */}
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  duration: 4000,
+                  style: {
+                    background: darkMode ? '#374151' : '#ffffff',
+                    color: darkMode ? '#ffffff' : '#000000',
+                    border: darkMode ? '1px solid #4b5563' : '1px solid #e5e7eb',
                   },
-                },
-                error: {
-                  iconTheme: {
-                    primary: '#ef4444',
-                    secondary: '#ffffff',
+                  success: {
+                    iconTheme: {
+                      primary: '#10b981',
+                      secondary: '#ffffff',
+                    },
                   },
-                },
-              }}
-            />
-          </div>
-        </ProgramProvider>
-      </WalletContextProvider>
+                  error: {
+                    iconTheme: {
+                      primary: '#ef4444',
+                      secondary: '#ffffff',
+                    },
+                  },
+                }}
+              />
+            </div>
+          </ProgramProvider>
+        </WalletContextProvider>
+      </ClusterProvider>
     </ErrorBoundary>
   );
 }

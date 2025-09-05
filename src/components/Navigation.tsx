@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { SunIcon, MoonIcon, Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline';
 import { classNames } from '../utils/classNames';
+import ClusterSwitch from './ClusterSwitch';
 
 interface NavigationProps {
   currentPage: 'create' | 'dashboard' | 'airdrop';
@@ -57,6 +58,9 @@ const Navigation: React.FC<NavigationProps> = ({
 
           {/* Right side */}
           <div className="hidden sm:ml-6 sm:flex sm:items-center sm:space-x-4">
+            {/* Cluster switch */}
+            <ClusterSwitch />
+
             {/* Dark mode toggle */}
             <button
               onClick={onToggleDarkMode}
@@ -115,22 +119,33 @@ const Navigation: React.FC<NavigationProps> = ({
           </div>
           
           <div className="pt-4 pb-3 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between px-4">
-              <button
-                onClick={onToggleDarkMode}
-                className="p-2 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
-                aria-label="Toggle dark mode"
-              >
-                {darkMode ? (
-                  <SunIcon className="h-5 w-5" />
-                ) : (
-                  <MoonIcon className="h-5 w-5" />
-                )}
-                <span className="ml-2 text-sm">
-                  {darkMode ? 'Light Mode' : 'Dark Mode'}
-                </span>
-              </button>
+            <div className="px-4 space-y-3">
+              {/* Cluster switch */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Network</span>
+                <ClusterSwitch />
+              </div>
+
+              {/* Dark mode toggle */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Theme</span>
+                <button
+                  onClick={onToggleDarkMode}
+                  className="p-2 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+                  aria-label="Toggle dark mode"
+                >
+                  {darkMode ? (
+                    <SunIcon className="h-5 w-5" />
+                  ) : (
+                    <MoonIcon className="h-5 w-5" />
+                  )}
+                  <span className="ml-2 text-sm">
+                    {darkMode ? 'Light Mode' : 'Dark Mode'}
+                  </span>
+                </button>
+              </div>
             </div>
+            
             <div className="mt-3 px-4">
               <WalletMultiButton />
             </div>

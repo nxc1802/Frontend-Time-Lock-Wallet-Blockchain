@@ -15,6 +15,10 @@ export interface TimeLockAccount {
   bump: number;
   amount: BN;
   tokenVault: PublicKey;
+  isInitialized: boolean;
+  solBalance: BN;
+  splTokenAccount: PublicKey | null;
+  isProcessing: boolean;
 }
 
 // Wallet info returned by get_wallet_info
@@ -59,6 +63,9 @@ export interface ProgramContextType {
   depositToken: (params: DepositParams & { tokenMint: PublicKey }) => Promise<string>;
   withdrawSol: (timeLockAccount: PublicKey) => Promise<string>;
   withdrawToken: (timeLockAccount: PublicKey, tokenMint: PublicKey) => Promise<string>;
+  withdrawAndCloseSol: (timeLockAccount: PublicKey) => Promise<string>;
+  closeEmptyAccount: (timeLockAccount: PublicKey) => Promise<string>;
+  closeTokenAccount: (timeLockAccount: PublicKey, tokenVault: PublicKey) => Promise<string>;
   getWalletInfo: (timeLockAccount: PublicKey) => Promise<WalletInfo>;
   
   // Utility functions
