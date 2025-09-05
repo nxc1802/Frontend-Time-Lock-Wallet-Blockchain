@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import { Program, AnchorProvider, Idl, BN } from '@coral-xyz/anchor';
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from '@solana/spl-token';
 
 import IDL from '../time_locked_wallet.json';
 import { 
@@ -142,9 +142,12 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
       .accounts({
         timeLockAccount: params.timeLockAccount,
         initializer: wallet.publicKey,
+        mint: params.tokenMint,
         tokenFromAta,
         tokenVault,
         tokenProgram: TOKEN_PROGRAM_ID,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
       })
       .rpc();
 
@@ -267,19 +270,28 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
     }
 
     try {
+      console.log('🔍 Fetching all time-lock accounts...');
       // Get all time-lock accounts and filter by owner
       const allAccounts = await (program.account as any).timeLockAccount.all();
+      
+      console.log('📊 Found total accounts:', allAccounts.length);
+      console.log('👤 Looking for accounts owned by:', userPublicKey.toBase58());
       
       // Filter accounts where the user is the owner
       const userAccounts = allAccounts.filter((account: any) => {
         const owner = account.account.owner;
-        return owner.equals(userPublicKey);
+        const isUserOwned = owner.equals(userPublicKey);
+        console.log('🔎 Account:', account.publicKey.toBase58(), 'Owner:', owner.toBase58(), 'IsUserOwned:', isUserOwned);
+        return isUserOwned;
       });
+
+      console.log('✅ User-owned accounts found:', userAccounts.length);
 
       const timeLockData: TimeLockData[] = [];
 
       for (const account of userAccounts) {
         try {
+          console.log('🔧 Processing account:', account.publicKey.toBase58());
           // Get wallet info for each account
           const walletInfo = await getWalletInfo(account.publicKey);
           
@@ -296,6 +308,7 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
             walletInfo,
           });
         } catch (error) {
+          console.log('⚠️ Error getting wallet info for account:', account.publicKey.toBase58(), error);
           // Still include the account even if wallet info fails
           timeLockData.push({
             publicKey: account.publicKey,
@@ -311,8 +324,10 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
         }
       }
 
+      console.log('🎯 Final timeLockData:', timeLockData);
       return timeLockData;
     } catch (error) {
+      console.error('❌ Error in getUserTimeLocks:', error);
       return [];
     }
   };
