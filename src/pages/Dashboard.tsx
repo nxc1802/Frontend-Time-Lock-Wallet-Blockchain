@@ -210,12 +210,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     window.alert('Delete functionality requires smart contract modification. This feature is not available yet.');
   };
 
-  // Format amount based on asset type
+  // Format amount display with proper decimals
   const formatAmount = (amount: BN, assetType: AssetType) => {
+    const amountNumber = safeToNumber(amount);
     if (assetType === AssetType.Sol) {
-      return `${(safeToNumber(amount) / LAMPORTS_PER_SOL).toFixed(4)} SOL`;
+      // SOL (native token)
+      return `${(amountNumber / LAMPORTS_PER_SOL).toFixed(4)} SOL`;
+    } else {
+      // Other tokens (likely USDC with 6 decimals)
+      const formattedAmount = (amountNumber / 1000000).toFixed(2); // 6 decimals for USDC
+      return `${formattedAmount} USDC`;
     }
-    return `${amount.toString()} Tokens`;
   };
 
   // Calculate status
@@ -317,8 +322,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
       // Ready = unlocked AND has amount AND is initialized
       return isUnlocked && hasAmount && isInitialized;
     }).sort((a, b) => {
-      // Sort by unlock timestamp (earliest ready first)
-      return a.account.unlockTimestamp.toNumber() - b.account.unlockTimestamp.toNumber();
+      // Sort by unlock timestamp (newest ready first)
+      return b.account.unlockTimestamp.toNumber() - a.account.unlockTimestamp.toNumber();
     });
     
     console.log('✅ Ready result:', ready.length);
