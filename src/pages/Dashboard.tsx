@@ -4,12 +4,18 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { BN } from '@coral-xyz/anchor';
-
 import { useTimeLock } from '../hooks/useTimeLock';
 import { TokenService } from '../services/tokenService';
 import { TimeLockData, AssetType } from '../types';
 import { Button, Card, Countdown } from '../components';
 import { ClockIcon, CurrencyDollarIcon, KeyIcon, DocumentTextIcon } from '@heroicons/react/24/outline';
+
+// Helper function to safely convert BN or number to number
+const safeToNumber = (value: any): number => {
+  if (typeof value === 'number') return value;
+  if (value && typeof value.toNumber === 'function') return value.toNumber();
+  return 0;
+};
 
 interface DashboardProps {
   onNavigateToCreate?: () => void;
@@ -207,7 +213,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
   // Format amount based on asset type
   const formatAmount = (amount: BN, assetType: AssetType) => {
     if (assetType === AssetType.Sol) {
-      return `${(amount.toNumber() / LAMPORTS_PER_SOL).toFixed(4)} SOL`;
+      return `${(safeToNumber(amount) / LAMPORTS_PER_SOL).toFixed(4)} SOL`;
     }
     return `${amount.toString()} Tokens`;
   };
@@ -238,8 +244,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
       timeLocks: timeLocks.map(lock => ({
         address: lock.publicKey.toBase58().slice(0, 8) + '...',
         owner: lock.account.owner.toBase58().slice(0, 8) + '...',
-        amount: lock.account.amount.toNumber(),
-        unlockTime: new Date(lock.account.unlockTimestamp.toNumber() * 1000).toLocaleString(),
+        amount: safeToNumber(lock.account.amount),
+        unlockTime: new Date(safeToNumber(lock.account.unlockTimestamp) * 1000).toLocaleString(),
         isUserOwned: lock.account.owner.equals(publicKey)
       }))
     });
@@ -256,9 +262,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     console.log('🔒 Current time:', currentTime, new Date(currentTime * 1000).toLocaleString());
     
     const locked = allPayments.filter(lock => {
-      const unlockTime = lock.account.unlockTimestamp.toNumber();
+      const unlockTime = safeToNumber(lock.account.unlockTimestamp);
       const isUnlocked = currentTime >= unlockTime;
-      const hasAmount = lock.account.amount.toNumber() > 0;
+      const hasAmount = safeToNumber(lock.account.amount) > 0;
       const isInitialized = lock.account.isInitialized;
       
       console.log('🔍 Locked check:', {
@@ -268,7 +274,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
         isUnlocked,
         hasAmount,
         isInitialized,
-        amount: lock.account.amount.toNumber(),
+        amount: safeToNumber(lock.account.amount),
         willBeLocked: !isUnlocked && hasAmount && isInitialized
       });
       
@@ -292,9 +298,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
     console.log('✅ Current time:', currentTime, new Date(currentTime * 1000).toLocaleString());
     
     const ready = allPayments.filter(lock => {
-      const unlockTime = lock.account.unlockTimestamp.toNumber();
+      const unlockTime = safeToNumber(lock.account.unlockTimestamp);
       const isUnlocked = currentTime >= unlockTime;
-      const hasAmount = lock.account.amount.toNumber() > 0;
+      const hasAmount = safeToNumber(lock.account.amount) > 0;
       const isInitialized = lock.account.isInitialized;
       
       console.log('🔍 Ready check:', {
@@ -304,7 +310,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
         isUnlocked,
         hasAmount,
         isInitialized,
-        amount: lock.account.amount.toNumber(),
+        amount: safeToNumber(lock.account.amount),
         willBeReady: isUnlocked && hasAmount && isInitialized
       });
       
@@ -323,7 +329,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
   // Render payment card
   const renderPaymentCard = (timeLock: TimeLockData, showActions: boolean = true) => {
     const status = getStatus(timeLock.walletInfo);
-    const unlockDate = new Date(timeLock.account.unlockTimestamp.toNumber() * 1000);
+    const unlockDate = new Date(safeToNumber(timeLock.account.unlockTimestamp) * 1000);
     
     return (
       <Card key={timeLock.publicKey.toBase58()} hover>
@@ -417,7 +423,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
                   >
                     Delete & Refund
                   </Button>
-                  {timeLock.account.amount.toNumber() === 0 && (
+                  {safeToNumber(timeLock.account.amount) === 0 && (
                     <Button
                       variant="outline"
                       size="sm"

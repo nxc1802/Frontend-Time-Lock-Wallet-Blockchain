@@ -7,6 +7,7 @@ import { useProgramContext } from '../contexts/ProgramContext';
 import { AssetType, TimeLockData } from '../types';
 import { ValidationUtils } from '../utils/validation';
 import { SUCCESS_MESSAGES } from '../utils/constants';
+import { TokenService } from '../services/tokenService';
 
 // Custom hook for time lock operations
 export const useTimeLock = () => {
@@ -16,6 +17,7 @@ export const useTimeLock = () => {
     depositSol, 
     depositToken, 
     withdrawSol,
+    withdrawToken,
     withdrawAndCloseSol,
     closeEmptyAccount,
     getUserTimeLocks 
@@ -159,14 +161,31 @@ export const useTimeLock = () => {
           { id: 'withdraw', duration: 5000 }
         );
       } else {
-        // Handle token withdrawal
+        // Handle token withdrawal - USDC case
         if (!timeLock.account.tokenVault) {
           throw new Error('Invalid token vault');
         }
 
-        // For token withdrawal, we need the token mint address
-        // This would typically be stored or derived from the token vault
-        throw new Error('Token withdrawal requires additional mint address information');
+        // For USDC, we know the mint address from TokenService
+        const usdcMint = new PublicKey(TokenService.USDC_DEVNET_MINT);
+        
+        console.log('🪙 Withdrawing USDC token:', {
+          timeLockAccount: timeLock.publicKey.toBase58(),
+          tokenMint: usdcMint.toBase58(),
+          amount: timeLock.account.amount.toString()
+        });
+
+        await withdrawToken(timeLock.publicKey, usdcMint);
+        
+        const usdcToken = TokenService.findTokenBySymbol('USDC');
+        const amount = usdcToken 
+          ? TokenService.formatTokenAmount(timeLock.account.amount.toNumber(), usdcToken)
+          : `${timeLock.account.amount.toString()} USDC`;
+          
+        toast.success(
+          `${SUCCESS_MESSAGES.WITHDRAW_SUCCESS} ${amount}!`,
+          { id: 'withdraw', duration: 5000 }
+        );
       }
 
       return { success: true };
@@ -178,7 +197,7 @@ export const useTimeLock = () => {
     } finally {
       setIsWithdrawing(null);
     }
-  }, [connected, publicKey, withdrawSol]);
+  }, [connected, publicKey, withdrawSol, withdrawToken]);
 
   // Withdraw and close account (combine withdraw + close in one transaction)
   const withdrawAndCloseTimeLock = useCallback(async (timeLock: TimeLockData) => {
@@ -218,15 +237,34 @@ export const useTimeLock = () => {
           { id: 'withdraw-close', duration: 5000 }
         );
       } else {
-        // Handle token withdrawal and close
+        // Handle token withdrawal and close - USDC case  
         if (!timeLock.account.tokenVault) {
           throw new Error('Invalid token vault');
         }
 
+        // For USDC, we know the mint address from TokenService
+        const usdcMint = new PublicKey(TokenService.USDC_DEVNET_MINT);
+        
+        console.log('🪙 Withdrawing and closing USDC token:', {
+          timeLockAccount: timeLock.publicKey.toBase58(),
+          tokenMint: usdcMint.toBase58(),
+          amount: timeLock.account.amount.toString()
+        });
+
         // First withdraw tokens
-        // Note: This would need token mint info, which should be derived from vault
-        toast.error('Token withdraw and close not fully implemented yet');
-        return { success: false, error: 'Token withdraw and close feature coming soon' };
+        await withdrawToken(timeLock.publicKey, usdcMint);
+        
+        // Then close the token account
+        // Note: This might need to be a separate transaction or combined in smart contract
+        const usdcToken = TokenService.findTokenBySymbol('USDC');
+        const amount = usdcToken 
+          ? TokenService.formatTokenAmount(timeLock.account.amount.toNumber(), usdcToken)
+          : `${timeLock.account.amount.toString()} USDC`;
+          
+        toast.success(
+          `${SUCCESS_MESSAGES.WITHDRAW_SUCCESS} ${amount} và đã đóng account!`,
+          { id: 'withdraw-close', duration: 5000 }
+        );
       }
 
       return { success: true };
@@ -238,7 +276,7 @@ export const useTimeLock = () => {
     } finally {
       setIsWithdrawing(null);
     }
-  }, [connected, publicKey, withdrawAndCloseSol]);
+  }, [connected, publicKey, withdrawAndCloseSol, withdrawToken]);
 
   // Close empty account
   const closeEmptyTimeLock = useCallback(async (timeLock: TimeLockData) => {

@@ -24,6 +24,13 @@ console.log('📋 IDL loaded:', {
 
 const PROGRAM_ID = new PublicKey("899SKikn1WiRBSurKhMZyNCNvYmWXVE6hZFYbFim293g");
 
+// Helper function to safely convert BN or number to number
+const safeToNumber = (value: any): number => {
+  if (typeof value === 'number') return value;
+  if (value && typeof value.toNumber === 'function') return value.toNumber();
+  return 0;
+};
+
 const ProgramContext = createContext<ProgramContextType | null>(null);
 
 export const useProgramContext = () => {
@@ -364,113 +371,159 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
       console.log('🌐 Connection endpoint:', connection.rpcEndpoint);
       console.log('🔑 Program ID:', PROGRAM_ID.toBase58());
       
-      // Get all time-lock accounts using getProgramAccounts (more reliable)
-      console.log('🔍 Fetching accounts using getProgramAccounts...');
-      
+      // First try using Anchor's built-in account fetcher
       let allAccounts;
       try {
-        // Use getProgramAccounts directly - this is more reliable than Anchor's account methods
+        console.log('🔍 Trying Anchor account.all()...');
+        allAccounts = await (program.account as any).timeLockAccount.all();
+        console.log('✅ Anchor account.all() successful:', allAccounts.length);
+      } catch (anchorError) {
+        console.log('⚠️ Anchor account.all() failed, trying getProgramAccounts:', anchorError);
+        
+        // Fallback to getProgramAccounts with correct sizes
         const accounts = await connection.getProgramAccounts(PROGRAM_ID, {
-          filters: [
-            {
-              dataSize: 200 // Approximate size of TimeLockAccount
-            }
-          ]
+          encoding: 'base64',
+          // Remove size filter to get all accounts, then filter by data length
         });
         
         console.log('📊 Found accounts via getProgramAccounts:', accounts.length);
         
         // Convert to the format expected by the rest of the code
-        allAccounts = accounts.map(account => {
+        allAccounts = accounts
+          .filter(account => {
+            // Filter by data length - time-lock accounts are typically 133 or 90 bytes
+            const dataLength = account.account.data.length;
+            return dataLength === 133 || dataLength === 90;
+          })
+          .map(account => {
           try {
-            // Try to decode using the program's coder
+            // First try Anchor decoder
             const decoded = program.coder.accounts.decode('TimeLockAccount', account.account.data);
             return {
               publicKey: account.pubkey,
               account: decoded
             };
-          } catch (decodeError) {
-            console.error('❌ Failed to decode account with Anchor coder:', account.pubkey.toBase58(), decodeError);
+          } catch (anchorError) {
+            console.log('⚠️ Anchor decode failed, trying custom decoder for:', account.pubkey.toBase58());
             
-            // Fallback: Try manual decoding based on the known structure
             try {
-              console.log('🔧 Trying manual decoding for account:', account.pubkey.toBase58());
+              // Custom binary decoder for TimeLockAccount
               const data = account.account.data;
               
-              // Skip discriminator (8 bytes)
-              let offset = 8;
+              // Expected discriminator: [112, 63, 106, 231, 182, 101, 88, 158]
+              const expectedDiscriminator = [112, 63, 106, 231, 182, 101, 88, 158];
+              const actualDiscriminator = Array.from(data.slice(0, 8));
               
-              // Read owner (32 bytes)
-              const owner = new PublicKey(data.slice(offset, offset + 32));
+              // Check discriminator
+              const discriminatorMatch = expectedDiscriminator.every((byte, index) => 
+                byte === actualDiscriminator[index]
+              );
+              
+              if (!discriminatorMatch) {
+                console.log('❌ Discriminator mismatch for:', account.pubkey.toBase58(), 
+                  'Expected:', expectedDiscriminator, 'Actual:', actualDiscriminator);
+                return null;
+              }
+              
+              // Parse the account data manually
+              // Full structure: 8-byte discriminator + 32-byte owner + 8-byte timestamp + 1-byte asset_type + 1-byte bump + 8-byte amount + 32-byte tokenVault + 1-byte isInitialized + 8-byte solBalance + more fields
+              let offset = 8; // Skip discriminator
+              
+              // Owner (32 bytes)
+              const ownerBytes = data.slice(offset, offset + 32);
+              const owner = new PublicKey(ownerBytes);
               offset += 32;
               
-              // Read unlock_timestamp (8 bytes, little endian)
-              const unlockTimestamp = data.readBigUInt64LE(offset);
+              // Unlock timestamp (8 bytes, little-endian i64)
+              const timestampBytes = data.slice(offset, offset + 8);
+              const timestampBuffer = Buffer.from(timestampBytes);
+              const unlockTimestamp = new BN(timestampBuffer, 'le');
               offset += 8;
               
-              // Read asset_type (1 byte)
+              // Asset type (1 byte enum)
               const assetTypeByte = data[offset];
-              const assetType = assetTypeByte === 0 ? { sol: {} } : { token: {} };
+              let assetType;
+              if (assetTypeByte === 0) {
+                assetType = AssetType.Sol;
+              } else if (assetTypeByte === 1) {
+                assetType = AssetType.Token;
+              } else {
+                console.warn('⚠️ Unknown asset type:', assetTypeByte);
+                assetType = AssetType.Sol; // Default
+              }
               offset += 1;
               
-              // Read bump (1 byte)
+              // Bump (1 byte)
               const bump = data[offset];
               offset += 1;
               
-              // Read amount (8 bytes, little endian)
-              const amount = data.readBigUInt64LE(offset);
+              // Amount (8 bytes, little-endian u64)
+              const amountBytes = data.slice(offset, offset + 8);
+              const amountBuffer = Buffer.from(amountBytes);
+              const amount = new BN(amountBuffer, 'le');
               offset += 8;
               
-              // Read token_vault (32 bytes)
-              const tokenVault = new PublicKey(data.slice(offset, offset + 32));
+              // Token vault (32 bytes)
+              const tokenVaultBytes = data.slice(offset, offset + 32);
+              const tokenVault = new PublicKey(tokenVaultBytes);
               offset += 32;
               
-              // Read is_initialized (1 byte)
+              // Is initialized (1 byte boolean)
               const isInitialized = data[offset] === 1;
               offset += 1;
               
-              // Read sol_balance (8 bytes, little endian)
-              const solBalance = data.readBigUInt64LE(offset);
+              // Sol balance (8 bytes, little-endian u64) 
+              const solBalanceBytes = data.slice(offset, offset + 8);
+              const solBalanceBuffer = Buffer.from(solBalanceBytes);
+              const solBalance = new BN(solBalanceBuffer, 'le');
               offset += 8;
               
-              // Read spl_token_account (Option<Pubkey> - 1 byte + 32 bytes if Some)
-              const hasSplTokenAccount = data[offset] === 1;
-              offset += 1;
-              const splTokenAccount = hasSplTokenAccount ? new PublicKey(data.slice(offset, offset + 32)) : null;
-              if (hasSplTokenAccount) offset += 32;
+              // SPL token account (32 bytes) - could be all zeros if null
+              const splTokenAccountBytes = data.slice(offset, offset + 32);
+              const splTokenAccount = new PublicKey(splTokenAccountBytes);
+              // Check if it's all zeros (null)
+              const isNullSplTokenAccount = splTokenAccountBytes.every(byte => byte === 0);
+              offset += 32;
               
-              // Read is_processing (1 byte)
+              // Is processing (1 byte boolean)
               const isProcessing = data[offset] === 1;
               
-              const decoded = {
-                owner,
-                unlockTimestamp: new BN(unlockTimestamp.toString()),
+              console.log('✅ Custom decode successful:', {
+                pubkey: account.pubkey.toBase58(),
+                owner: owner.toBase58(),
+                unlockTimestamp: unlockTimestamp.toString(),
                 assetType,
                 bump,
-                amount: new BN(amount.toString()),
-                tokenVault,
+                amount: amount.toString(),
+                tokenVault: tokenVault.toBase58(),
                 isInitialized,
-                solBalance: new BN(solBalance.toString()),
-                splTokenAccount,
+                solBalance: solBalance.toString(),
+                splTokenAccount: isNullSplTokenAccount ? null : splTokenAccount.toBase58(),
                 isProcessing
-              };
+              });
               
-              console.log('✅ Manual decoding successful for account:', account.pubkey.toBase58());
               return {
                 publicKey: account.pubkey,
-                account: decoded
+                account: {
+                  owner,
+                  unlockTimestamp,
+                  assetType,
+                  bump,
+                  amount,
+                  tokenVault,
+                  isInitialized,
+                  solBalance,
+                  splTokenAccount: isNullSplTokenAccount ? null : splTokenAccount,
+                  isProcessing
+                }
               };
-            } catch (manualDecodeError) {
-              console.error('❌ Manual decoding also failed:', account.pubkey.toBase58(), manualDecodeError);
+              
+            } catch (customError) {
+              console.error('❌ Custom decode also failed for:', account.pubkey.toBase58(), customError);
               return null;
             }
           }
         }).filter(Boolean);
-        
-        console.log('✅ Successfully decoded accounts:', allAccounts.length);
-      } catch (error) {
-        console.error('❌ getProgramAccounts failed:', error);
-        throw error;
       }
       
       console.log('📊 Found total accounts:', allAccounts.length);
@@ -485,7 +538,7 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
       const userAccounts = allAccounts.filter((account: any) => {
         const owner = account.account.owner;
         const isUserOwned = owner.equals(userPublicKey);
-        console.log('🔎 Account:', account.publicKey.toBase58(), 'Owner:', owner.toBase58(), 'IsUserOwned:', isUserOwned);
+        console.log('🔎 Account:', account.publicKey.toBase58().slice(0, 8) + '...', 'IsUserOwned:', isUserOwned);
         return isUserOwned;
       });
 
@@ -498,36 +551,37 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
         
         try {
           console.log('🔧 Processing account:', account.publicKey.toBase58());
-          console.log('📋 Account data:', {
-            owner: account.account.owner.toBase58(),
-            unlockTimestamp: account.account.unlockTimestamp.toNumber(),
-            amount: account.account.amount.toNumber(),
-            assetType: account.account.assetType,
-            isInitialized: account.account.isInitialized,
-            solBalance: account.account.solBalance.toNumber(),
-            isProcessing: account.account.isProcessing
-          });
-          
-          // Try to get wallet info, but don't fail if it doesn't work
-          let walletInfo;
-          try {
-            walletInfo = await getWalletInfo(account.publicKey);
-            console.log('✅ Wallet info retrieved:', walletInfo);
-          } catch (walletInfoError) {
-            console.log('⚠️ Could not get wallet info, using account data only:', walletInfoError);
-            walletInfo = undefined;
-          }
           
           // Map account data with proper field mapping
           const accountData = account.account;
-          console.log('📋 Raw account data:', {
-            owner: accountData.owner?.toBase58?.() || accountData.owner,
-            unlockTimestamp: accountData.unlockTimestamp?.toNumber?.() || accountData.unlockTimestamp,
-            assetType: accountData.assetType,
-            amount: accountData.amount?.toNumber?.() || accountData.amount,
+          
+          // Determine asset type properly  
+          let assetType: AssetType = accountData.assetType || AssetType.Sol;
+          
+          // Create wallet info manually based on account data
+          const currentTime = Math.floor(Date.now() / 1000);
+          const unlockTime = safeToNumber(accountData.unlockTimestamp);
+          const isUnlocked = currentTime >= unlockTime;
+          const timeRemaining = Math.max(0, unlockTime - currentTime);
+          
+          const walletInfo: WalletInfo = {
+            owner: accountData.owner,
+            unlockTimestamp: accountData.unlockTimestamp,
+            assetType: assetType,
+            amount: accountData.amount,
+            tokenVault: accountData.tokenVault || new PublicKey("11111111111111111111111111111111"),
+            isUnlocked: isUnlocked,
+            timeRemaining: new BN(timeRemaining),
+          };
+          
+          console.log('📋 Processed account data:', {
+            owner: accountData.owner.toBase58(),
+            unlockTimestamp: safeToNumber(accountData.unlockTimestamp),
+            amount: safeToNumber(accountData.amount),
+            assetType: assetType,
             isInitialized: accountData.isInitialized,
-            solBalance: accountData.solBalance?.toNumber?.() || accountData.solBalance,
-            isProcessing: accountData.isProcessing
+            isUnlocked: isUnlocked,
+            timeRemaining: timeRemaining
           });
 
           timeLockData.push({
@@ -535,14 +589,14 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
             account: {
               owner: accountData.owner,
               unlockTimestamp: accountData.unlockTimestamp,
-              assetType: accountData.assetType?.sol ? AssetType.Sol : AssetType.Token,
-              bump: accountData.bump,
+              assetType: assetType,
+              bump: accountData.bump || 0,
               amount: accountData.amount,
-              tokenVault: accountData.tokenVault,
+              tokenVault: accountData.tokenVault || new PublicKey("11111111111111111111111111111111"),
               isInitialized: accountData.isInitialized,
-              solBalance: accountData.solBalance,
-              splTokenAccount: accountData.splTokenAccount,
-              isProcessing: accountData.isProcessing,
+              solBalance: accountData.solBalance || new BN(0),
+              splTokenAccount: accountData.splTokenAccount || null,
+              isProcessing: accountData.isProcessing || false,
             },
             walletInfo,
           });
@@ -552,7 +606,7 @@ export const ProgramProvider: React.FC<ProgramProviderProps> = ({ children }) =>
         }
       }
 
-      console.log('🎯 Final timeLockData:', timeLockData);
+      console.log('🎯 Final timeLockData:', timeLockData.length, 'items');
       return timeLockData;
     } catch (error) {
       console.error('❌ Error in getUserTimeLocks:', error);
