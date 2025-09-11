@@ -400,15 +400,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToCreate, refreshTrigge
               {timeLock.walletInfo?.isUnlocked ? (
                 <div className="flex gap-2">
                   <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => handleWithdraw(timeLock)}
-                    disabled={isWithdrawing === timeLock.publicKey.toBase58()}
-                    className="flex-1"
-                  >
-                    {isWithdrawing === timeLock.publicKey.toBase58() ? 'Processing...' : 'Withdraw'}
-                  </Button>
-                  <Button
                     variant="success"
                     size="sm"
                     onClick={() => handleWithdrawAndClose(timeLock)}
